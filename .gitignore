@@ -50,3 +50,7 @@ Desktop.ini
 *.tmp
 *.temp
 
+# Frontend dependencies and local verification artifacts
+node_modules/
+work/
+

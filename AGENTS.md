@@ -10,7 +10,7 @@
 - [PRD.md](PRD.md)：趋势发现需求与业务边界。
 - [TODO.md](TODO.md)：任务状态与待确认事项。
 - 工作区检查：`git status --short --branch`。
-- 安装、运行和测试命令随实际脚本或配置建立后补充到 [README.md](README.md)。
+- 安装、运行、构建与测试命令见 [README.md](README.md)；变更入口时核对 [package.json](package.json) 的脚本定义并同步说明。
 
 ## 文档维护
 
