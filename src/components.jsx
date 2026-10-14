@@ -2,31 +2,43 @@
  * 原型展示组件：图标、商品示意图、榜单、搜索折线和报告预览。
  * 所有输出来自 props；没有 API、外部素材和自动发送。报告利用浏览器打印布局
  * 保存 PDF，选中项与隐藏状态由父组件维护，关闭预览后再次打开仍保留调整。
+ * 图标改用 lucide（ISC 许可，官方 npm 包），不再维护手写 path，许可与来源可追溯。
  */
 import { useEffect, useId, useRef } from 'react';
+import {
+  ArrowRight, Check, ChevronDown, ChevronUp, Clock, Database, Download, FileText,
+  LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, Search, Sparkles, Table2, TrendingUp, X,
+} from 'lucide-react';
 import { DATA_DATE, UPDATED_AT } from './mockData';
-import { TYPE_LABELS, explainTrend, formatGrowth, formatNumber, getOwnProducts, groupReport, metrics, systemLevel } from './domain';
+import { TYPE_LABELS, explainTrend, formatGrowth, formatNumber, getOwnProducts, groupReport, growthRate, metrics, systemLevel } from './domain';
 
-const iconPaths = {
-  trend: 'M3 17 9 11 13 15 21 5 M16 5h5v5',
-  grid: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
-  report: 'M6 3h9l4 4v14H6z M14 3v5h5 M9 12h7 M9 16h7',
-  search: 'M16 16 21 21 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
-  arrow: 'M4 12h16 M14 6l6 6-6 6',
-  plus: 'M12 5v14 M5 12h14',
-  check: 'M5 12l4 4L19 6',
-  close: 'M6 6l12 12 M6 18 18 6',
-  up: 'M6 14l6-6 6 6',
-  down: 'M6 10l6 6 6-6',
-  download: 'M12 3v12 M6 9l6 6 6-6 M4 17v4h16v-4',
-  data: 'M20 6c0 2-4 3-8 3s-8-1-8-3 4-3 8-3 8 1 8 3 M4 6v12c0 2 4 3 8 3s8-1 8-3V6 M4 12c0 2 4 3 8 3s8-1 8-3',
-  spark: 'M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z',
-  clock: 'M12 8v5l3 2 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+const iconMap = {
+  trend: TrendingUp,
+  grid: LayoutGrid,
+  report: FileText,
+  search: Search,
+  arrow: ArrowRight,
+  plus: Plus,
+  check: Check,
+  close: X,
+  up: ChevronUp,
+  down: ChevronDown,
+  download: Download,
+  data: Database,
+  spark: Sparkles,
+  clock: Clock,
+  table: Table2,
+  panelClose: PanelLeftClose,
+  panelOpen: PanelLeftOpen,
 };
 
-/** 本地图标避免在线字体依赖；纯装饰默认 aria-hidden，按钮通过可见文字/标签命名。 */
+/** 等级中文名到 ASCII 类名；避免用中文字符充当 CSS 类名，便于样式复用与外部工具处理。 */
+const LEVEL_SLUG = { 爆发: 'explosive', 增长: 'growth', 稳定: 'stable' };
+
+/** 装饰性图标对读屏隐藏，按钮由可见文字或 aria-label 命名。 */
 export function Icon({ name, size = 18, ...props }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}><path d={iconPaths[name] ?? iconPaths.spark} /></svg>;
+  const Glyph = iconMap[name] ?? Sparkles;
+  return <Glyph size={size} strokeWidth={1.65} aria-hidden="true" {...props} />;
 }
 
 /** 款式插画为本地 SVG 示意，不将概念图冒充真实大盘商品照片。 */
@@ -40,10 +52,11 @@ export function ProductArt({ item, small = false }) {
   </div>;
 }
 
-/** 系统等级与运营调整分别保留；只在人工覆盖生效时附加可见标记。 */
+/** 系统等级与运营调整分别保留；人工覆盖同时给出可见文字标记，不依赖 title 提示。 */
 export function LevelBadge({ item, overrides }) {
   const level = overrides[item.id] ?? systemLevel(item);
-  return <span className={`level level-${level}`}>{level}{overrides[item.id] && <span className="manual-mark" title="运营手动调整"> · 人工</span>}</span>;
+  const manual = Boolean(overrides[item.id]);
+  return <span className={`level level-${LEVEL_SLUG[level] ?? 'stable'}`}>{level}{manual && <span className="manual-mark"> · 人工</span>}</span>;
 }
 
 /** 名次变化来自同周期的上期样本；不把本系统增长榜名次称为大盘商品排名。 */
@@ -53,10 +66,11 @@ export function RankDelta({ value }) {
 
 /**
  * 使用真正的搜索量和日期坐标绘制 SVG 图表，纵轴从 0 起避免夸大变化。
+ * 紧凑模式用 preserveAspectRatio="none" 让线体填满卡片容器，配合 non-scaling-stroke
+ * 保持笔宽恒定；此前 viewBox 比例与容器不符，桌面端约一半高度被留白。
  * days 控制展示窗口，独立于榜单 day/week 增长口径；缺失历史只画可用点。
  */
 export function SearchChart({ item, days = 7, compact = false }) {
-  // 图表复用 CSS 主色，确保工作台、弹窗和打印同步；款式由名称区分。
   const chartColor = 'var(--primary)';
   const gradientId = `chart-${useId().replaceAll(':', '')}`;
   const history = item.history.slice(-days);
@@ -70,25 +84,48 @@ export function SearchChart({ item, days = 7, compact = false }) {
   }));
   const line = points.map((point) => `${point.x},${point.y}`).join(' ');
   const ticks = compact ? [] : [...new Set([0, Math.floor((history.length - 1) / 3), Math.floor((history.length - 1) * 2 / 3), history.length - 1])];
-  return <svg className={`search-chart ${compact ? 'compact' : ''}`} viewBox={`0 0 ${width} ${height + (compact ? 15 : 45)}`} role="img" aria-label={`${item.name}最近${days}天逐日搜索量`}>
+  const first = history[0]?.value;
+  const last = history.at(-1)?.value;
+  const range = Number.isFinite(first) && Number.isFinite(last) ? `，由 ${formatNumber(first)} 变为 ${formatNumber(last)}` : '';
+  return <svg className={`search-chart ${compact ? 'compact' : ''}`} viewBox={`0 0 ${width} ${height + (compact ? 15 : 45)}`} preserveAspectRatio={compact ? 'none' : undefined} role="img" aria-label={`${item.name}最近 ${days} 天逐日搜索量${range}。完整数值可在数据表查看。`}>
     <defs><linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={chartColor} stopOpacity=".16" /><stop offset="100%" stopColor={chartColor} stopOpacity="0" /></linearGradient></defs>
     {!compact && [0, .5, 1].map((ratio) => <g key={ratio}><line x1={padding} x2={width - 12} y1={10 + height * ratio} y2={10 + height * ratio} stroke="var(--line)" strokeDasharray="4 5" /><text x="0" y={14 + height * ratio} fill="var(--muted)" fontSize="12">{formatNumber(Math.round(peak * (1 - ratio)))}</text></g>)}
     <polygon points={`${padding},${height + 10} ${line} ${width - 12},${height + 10}`} fill={`url(#${gradientId})`} />
-    <polyline points={line} fill="none" stroke={chartColor} strokeWidth={compact ? 5 : 2.6} strokeLinecap="round" strokeLinejoin="round" />
+    <polyline points={line} fill="none" stroke={chartColor} strokeWidth={compact ? 2 : 2.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect={compact ? 'non-scaling-stroke' : undefined} />
     {!compact && points.map((point) => <circle key={point.date} cx={point.x} cy={point.y} r="3.6" fill="#fff" stroke={chartColor} strokeWidth="2"><title>{point.date}：搜索量 {formatNumber(point.value)}</title></circle>)}
     {ticks.map((index) => <text key={index} x={points[index].x} y={height + 37} textAnchor={index === 0 ? 'start' : index === history.length - 1 ? 'end' : 'middle'} fontSize="12" fill="var(--muted)">{points[index].date.slice(5).replace('-', '/')}</text>)}
   </svg>;
 }
 
-/** 总览卡片使用当前排序周期的增长和名次，同时支持单项加入报告。 */
-export function TrendCard({ item, days, growthWindow, overrides, selected, onToggle, onOpen }) {
+/** 走势的数据表替代视图：键盘与读屏用户可逐日取值，不依赖悬停 SVG 节点。 */
+export function ChartDataTable({ item, days }) {
+  const history = item.history.slice(-days);
+  return <div className="table-wrap chart-data-table">
+    <table aria-label={`${item.name}最近 ${days} 天逐日搜索量数据表`}>
+      <thead><tr><th scope="col">日期</th><th scope="col">搜索量</th><th scope="col">较前一日</th></tr></thead>
+      <tbody>{history.map((point, index) => {
+        const delta = index ? growthRate(point.value, history[index - 1].value) : null;
+        return <tr key={point.date}><td>{point.date}</td><td>{formatNumber(point.value)}</td><td className={delta > 0 ? 'growth-up' : undefined}>{delta === null ? '—' : formatGrowth(delta)}</td></tr>;
+      })}</tbody>
+    </table>
+  </div>;
+}
+
+/** 总览卡片：插画降为辅助，增长率升为卡片主数值，同时支持单项加入报告。 */
+export function TrendCard({ item, days, growthWindow, overrides, selected, artSuppressed, onToggle, onOpen }) {
   const values = metrics(item);
+  const windowLabel = growthWindow === 'week' ? '近 7 天' : '近 1 天';
   return <article className={`trend-card ${selected ? 'is-selected' : ''}`}>
-    <div className="card-art"><ProductArt item={item} /><span className="card-rank">{String(item.rank).padStart(2, '0')}</span><div className="card-badge"><LevelBadge item={item} overrides={overrides} /></div></div>
+    <div className="card-art">
+      {/* 共享元素名用于卡片→详情弹窗的无缝形变；弹窗已接管时本卡片让出名字，避免重名 */}
+      <div style={artSuppressed ? undefined : { viewTransitionName: `art-${item.id}` }}><ProductArt item={item} /></div>
+      <span className="card-rank">{String(item.rank).padStart(2, '0')}</span>
+      <div className="card-badge"><LevelBadge item={item} overrides={overrides} /></div>
+    </div>
     <div className="card-body"><span className="trend-category">{item.category}</span><button className="link-button trend-title" onClick={() => onOpen(item)}>{item.name}<Icon name="arrow" size={15} /></button>
-      <div className="card-metrics"><div><span>最新日搜索量</span><strong>{formatNumber(values.volume)}</strong></div><div><span>{growthWindow === 'week' ? '近 7 天' : '近 1 天'}增长</span><strong className="growth-up">{formatGrowth(values[growthWindow])}</strong></div></div>
+      <div className="card-hero"><span>{windowLabel}增长</span><strong>{formatGrowth(values[growthWindow])}</strong></div>
       <SearchChart item={item} days={days} compact />
-      <div className="card-rank-change"><span>增长榜排名变化</span><RankDelta value={item.rankDelta} /></div>
+      <div className="card-sub"><span>最新日搜索量 <strong>{formatNumber(values.volume)}</strong></span><span>排名变化 <RankDelta value={item.rankDelta} /></span></div>
       <div className="card-foot"><button className="card-detail-button" onClick={() => onOpen(item)} aria-label={`查看${item.name}详情`}>查看详情</button><button className={`report-check ${selected ? 'checked' : ''}`} onClick={() => onToggle(item.id)} aria-pressed={selected} aria-label={`${selected ? '移除' : '加入'}${item.name}报告`}><Icon name={selected ? 'check' : 'plus'} size={13} />{selected ? '已加入' : '加入报告'}</button></div>
     </div>
   </article>;
@@ -98,20 +135,21 @@ export function TrendCard({ item, days, growthWindow, overrides, selected, onTog
 export function RankTable({ items, type, overrides, growthWindow, selectedIds, onOpen, onToggle }) {
   return <div className="table-wrap"><table><thead><tr><th>排名</th><th>趋势{TYPE_LABELS[type]}</th><th>关联品类</th><th>最新日搜索量</th><th>{growthWindow === 'week' ? '近 7 天' : '近 1 天'}增长率</th><th>趋势等级</th><th>排名变化</th><th>报告操作</th></tr></thead><tbody>
     {items.map((item) => <tr key={item.id}><td><span className={`table-rank rank-${item.rank}`}>{String(item.rank).padStart(2, '0')}</span></td><td><button className="link-button table-name" onClick={() => onOpen(item)}>{item.name}<Icon name="arrow" size={13} /></button></td><td><span className="category-pill">{item.category}</span></td><td>{formatNumber(metrics(item).volume)}</td><td className="growth-up">{formatGrowth(metrics(item)[growthWindow])}</td><td><LevelBadge item={item} overrides={overrides} /></td><td><RankDelta value={item.rankDelta} /></td><td><button className={`report-check ${selectedIds.includes(item.id) ? 'checked' : ''}`} onClick={() => onToggle(item.id)} aria-pressed={selectedIds.includes(item.id)} aria-label={`${selectedIds.includes(item.id) ? '移除' : '加入'}${item.name}报告`}><Icon name={selectedIds.includes(item.id) ? 'check' : 'plus'} size={15} />{selectedIds.includes(item.id) ? '已加入' : '加入报告'}</button></td></tr>)}
-    {!items.length && <tr><td colSpan="8" className="empty-state">没有符合筛选的趋势，试试其他品类或搜索词。</td></tr>}
+    {!items.length && <tr><td colSpan="8"><div className="state-block"><strong>没有符合条件的趋势</strong><p>试试其他品类、趋势等级或搜索词。</p></div></td></tr>}
   </tbody></table></div>;
 }
 
 /** 匹配结果仅展示近 7 天数据；标签按 fixture 的冒号前维度着色，未知维度保留默认色。 */
 export function ProductTable({ item }) {
   const products = getOwnProducts(item);
-  return <div className="table-wrap"><table className="product-table"><thead><tr><th>自家相似商品</th><th>匹配依据</th><th>近 7 天点击量</th><th>成交单数</th><th>点击转化率</th></tr></thead><tbody>{products.map((product) => <tr key={product.id}><td><strong>{product.name}</strong><span className="product-id">{product.id}</span></td><td><div className="match-reasons">{product.matchReasons.map((reason) => <span key={reason} data-dimension={reason.split('：')[0]}>{reason}</span>)}</div></td><td>{formatNumber(product.clicks)}</td><td>{product.orders}</td><td>{product.clicks > 0 ? `${(product.orders / product.clicks * 100).toFixed(2)}%` : '暂无可比数据'}</td></tr>)}{!products.length && <tr><td colSpan="5" className="empty-state">暂无相似商品样本。无匹配不代表商品表现差。</td></tr>}</tbody></table></div>;
+  return <div className="table-wrap"><table className="product-table"><thead><tr><th>自家相似商品</th><th>匹配依据</th><th>近 7 天点击量</th><th>成交单数</th><th>点击转化率</th></tr></thead><tbody>{products.map((product) => <tr key={product.id}><td><strong>{product.name}</strong><span className="product-id">{product.id}</span></td><td><div className="match-reasons">{product.matchReasons.map((reason) => <span key={reason} data-dimension={reason.split('：')[0]}>{reason}</span>)}</div></td><td>{formatNumber(product.clicks)}</td><td>{product.orders}</td><td>{product.clicks > 0 ? `${(product.orders / product.clicks * 100).toFixed(2)}%` : '暂无可比数据'}</td></tr>)}{!products.length && <tr><td colSpan="5"><div className="state-block"><strong>暂无相似商品样本</strong><p>无匹配不代表商品表现差。</p></div></td></tr>}</tbody></table></div>;
 }
 
 /**
  * 模态容器隔离焦点、支持 Escape 和遮罩关闭；关闭时把焦点还给触发按钮。
  * 后台设置 inert，防止键盘与读屏操作背景；稳定 onClose 避免状态更新重置焦点。
  * 恢复焦点使用 preventScroll，保持用户关闭弹窗前的浏览位置。
+ * 进出场由 CSS 关键帧或 View Transitions 提供，本组件不参与动画时序。
  */
 export function Modal({ title, onClose, children, className = '' }) {
   const ref = useRef(null);
@@ -140,6 +178,30 @@ export function Modal({ title, onClose, children, className = '' }) {
   return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section ref={ref} tabIndex={-1} className={`modal ${className}`} role="dialog" aria-modal="true" aria-label={title}>{children}</section></div>;
 }
 
+/**
+ * 页签按 WAI-ARIA APG 实现：方向键与 Home/End 移动，roving tabindex 让整组只占一个 Tab 位。
+ * 三处页签共用同一实现，避免各处键盘行为不一致。
+ */
+export function Tabs({ items, activeId, onChange, idPrefix, controlsId, ariaLabel, className = '' }) {
+  const refs = useRef({});
+  function handleKeyDown(event) {
+    const index = items.findIndex((item) => item.id === activeId);
+    let nextIndex = null;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % items.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + items.length) % items.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = items.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextId = items[nextIndex].id;
+    onChange(nextId);
+    refs.current[nextId]?.focus();
+  }
+  return <div className={`tabs ${className}`} role="tablist" aria-label={ariaLabel}>
+    {items.map((item) => <button key={item.id} ref={(element) => { refs.current[item.id] = element; }} id={`${idPrefix}-${item.id}`} role="tab" aria-controls={controlsId} aria-selected={activeId === item.id} tabIndex={activeId === item.id ? 0 : -1} className={activeId === item.id ? 'active' : ''} onClick={() => onChange(item.id)} onKeyDown={handleKeyDown}>{item.label}{item.count !== undefined && <span>{item.count}</span>}</button>)}
+  </div>;
+}
+
 /** 单个报告章节使用同一详情数据，隐藏内容也从最终打印 DOM 中移除。 */
 function ReportItem({ item, days, overrides, hiddenSections }) {
   return <article className="report-detail"><div className="report-detail-title"><div><span className="eyebrow">{TYPE_LABELS[item.type]} · {item.category}</span><h3>{item.name}</h3></div><LevelBadge item={item} overrides={overrides} /></div>
@@ -155,16 +217,26 @@ function ReportItem({ item, days, overrides, hiddenSections }) {
 /**
  * PDF 预览只提供组内排序、内容隐藏/恢复和打印导出。
  * browser print 可选择“另存为 PDF”；本组件不宣称已生成文件、不请求导出服务。
+ * 标题在 afterprint 后还原，避免异步打印时文件名被提前改回；另有超时兜底。
  */
 export function ReportModal({ items, days, overrides, hiddenIds, hiddenSections, onMove, onToggleHidden, onToggleSection, onClose }) {
   const groups = groupReport(items);
   const visible = items.filter((item) => !hiddenIds.includes(item.id));
-  /** 浏览器生成 PDF 保留当前预览 DOM 和隐藏状态；打印结束恢复工作台标题。 */
   function generateReport() {
     const oldTitle = document.title;
+    let restored = false;
+    let timer;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      document.title = oldTitle;
+      window.removeEventListener('afterprint', restore);
+      clearTimeout(timer);
+    };
+    window.addEventListener('afterprint', restore);
+    timer = setTimeout(restore, 60000);
     document.title = `女装趋势机会报告_${DATA_DATE}_MOCK`;
     window.print();
-    document.title = oldTitle;
   }
   return <Modal title="趋势机会报告预览" onClose={onClose} className="report-modal">
     <div className="modal-head no-print"><div><span className="eyebrow">REPORT PREVIEW</span><h2>报告预览</h2><p>调整顺序、隐藏内容，确认后生成 PDF。</p></div><button className="close-button" aria-label="关闭报告预览" onClick={onClose}><Icon name="close" /></button></div>
@@ -172,8 +244,7 @@ export function ReportModal({ items, days, overrides, hiddenIds, hiddenSections,
       {groups.map((group) => <div className="report-selection-group" key={group.type}><span className="report-group-label">{group.label}</span>{group.items.map((item, index) => <div className={`report-row ${hiddenIds.includes(item.id) ? 'hidden-item' : ''}`} key={item.id}><span className="report-index">{String(index + 1).padStart(2, '0')}</span><strong>{item.name}</strong><div className="row-actions"><button aria-label={`上移${item.name}`} disabled={!index} onClick={() => onMove(item.id, -1)}><Icon name="up" size={14} /></button><button aria-label={`下移${item.name}`} disabled={index === group.items.length - 1} onClick={() => onMove(item.id, 1)}><Icon name="down" size={14} /></button><button className="hide-action" onClick={() => onToggleHidden(item.id)}>{hiddenIds.includes(item.id) ? '恢复' : '隐藏'}</button></div></div>)}</div>)}
       <div className="section-toggles"><span>显示内容</span>{[['chart', '走势'], ['reason', '趋势解释'], ['keywords', '搜索词'], ['products', '相似商品']].map(([key, label]) => <label key={key}><input type="checkbox" checked={!hiddenSections.includes(key)} onChange={() => onToggleSection(key)} />{label}</label>)}</div>
     </div>
-    {visible.length ? <div className="report-paper"><div className="report-cover"><span className="eyebrow">TREND LAB · VIPSHOP WOMENSWEAR</span><h2>女装趋势机会报告</h2><p>数据日期 {DATA_DATE} · {visible.length} 个趋势项 · MOCK 示例数据</p></div>{groupReport(visible).map((group) => <section className="report-chapter" key={group.type}><h2>{group.label}趋势</h2>{group.items.map((item) => <ReportItem key={item.id} item={item} days={days} overrides={overrides} hiddenSections={hiddenSections} />)}</section>)}<p className="report-disclaimer">数据更新于 {UPDATED_AT}。本报告使用本地模拟数据，仅用于方案预览。自家表现由运营判断。</p></div> : <div className="empty-state report-empty">{items.length ? '所有趋势项已隐藏，可以点击“恢复”继续预览。' : '还没有选择趋势项。返回榜单，点击“加入报告”开始筛选。'}</div>}
+    {visible.length ? <div className="report-paper"><div className="report-cover"><span className="eyebrow">TREND LAB · VIPSHOP WOMENSWEAR</span><h2>女装趋势机会报告</h2><p>数据日期 {DATA_DATE} · {visible.length} 个趋势项 · 示例数据</p></div>{groupReport(visible).map((group) => <section className="report-chapter" key={group.type}><h2>{group.label}趋势</h2>{group.items.map((item) => <ReportItem key={item.id} item={item} days={days} overrides={overrides} hiddenSections={hiddenSections} />)}</section>)}<p className="report-disclaimer">数据更新于 {UPDATED_AT}。本报告使用本地模拟数据，仅用于方案预览。自家表现由运营判断。</p></div> : <div className="state-block report-empty"><strong>{items.length ? '所有趋势项已隐藏' : '还没有选择趋势项'}</strong><p>{items.length ? '点击“恢复”可以继续预览。' : '返回榜单，点击“加入报告”开始筛选。'}</p></div>}
     <div className="modal-foot no-print"><span>点击生成后，在打印窗口选择“另存为 PDF”。</span><button className="secondary-button" onClick={onClose}>继续筛选</button><button className="primary-button" onClick={generateReport} disabled={!visible.length}><Icon name="download" size={16} />生成 PDF</button></div>
   </Modal>;
 }
-

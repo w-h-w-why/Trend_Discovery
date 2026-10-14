@@ -51,6 +51,7 @@ npm run preview -- --host 127.0.0.1
 - [界面样式](src/styles.css)：桌面、窄屏与打印布局。
 - [契约检查](tests/domain.test.js)：计算和排序边界测试。
 - [验证记录](docs/delivery/prototype-validation.md)：实跑结果、浏览器交互、注释核对和未验证项。
+- [界面设计审查](docs/delivery/ui-design-review.md)：布局、视觉一致性、交互流程、响应式与可用性的分级问题清单与改进建议（含对比度实测值）。
 - [预览截图](outputs/preview-forest-green.png)：当前森系绿总览效果。
 - [详情截图](outputs/preview-detail-forest-green.png)：详情弹窗与标签配色。
 - [依赖与命令](package.json)：固定版本与运行脚本。
